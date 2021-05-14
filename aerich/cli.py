@@ -24,9 +24,9 @@ from aerich.utils import (
     write_version_file,
 )
 
-from . import __version__
-from .enums import Color
-from .models import Aerich
+from aerich import __version__
+from aerich.enums import Color
+from aerich.models import Aerich
 
 parser = ConfigParser()
 
