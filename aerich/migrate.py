@@ -172,7 +172,7 @@ class Migrate:
 
         for new_model_str, new_model_describe in new_models.items():
             model = cls._get_model(new_model_describe.get("name").split(".")[1])
-
+            table_name = model._meta.db_table
             if new_model_str not in old_models.keys():
                 if upgrade:
                     cls._add_operator(cls.add_model(model), upgrade)
@@ -185,7 +185,7 @@ class Migrate:
                 new_table = new_model_describe.get("table")
                 old_table = old_model_describe.get("table")
                 if new_table != old_table:
-                    cls._add_operator(cls.rename_table(model, old_table, new_table), upgrade)
+                    cls._add_operator(cls.rename_table(table_name, old_table, new_table), upgrade)
                 old_unique_together = set(
                     map(lambda x: tuple(x), old_model_describe.get("unique_together"))
                 )
@@ -200,10 +200,13 @@ class Migrate:
                 for action, option, change in changes:
                     # current only support rename pk
                     if action == "change" and option == "name":
-                        cls._add_operator(cls._rename_field(model, *change), upgrade)
+                        cls._add_operator(cls._rename_field(table_name, *change), upgrade)
                 # m2m fields
                 old_m2m_fields = old_model_describe.get("m2m_fields")
                 new_m2m_fields = new_model_describe.get("m2m_fields")
+                print("")
+                print(old_m2m_fields)
+                print(new_m2m_fields)
                 for action, option, change in diff(old_m2m_fields, new_m2m_fields):
                     table = change[0][1].get("through")
                     if action == "add":
@@ -217,7 +220,7 @@ class Migrate:
                         if add:
                             cls._add_operator(
                                 cls.create_m2m(
-                                    model,
+                                    model.describe(),
                                     change[0][1],
                                     new_models.get(change[0][1].get("model_name")),
                                 ),
@@ -237,12 +240,12 @@ class Migrate:
                 # add unique_together
                 for index in new_unique_together.difference(old_unique_together):
                     cls._add_operator(
-                        cls._add_index(model, index, True), upgrade,
+                        cls._add_index(table_name, index, True), upgrade,
                     )
                 # remove unique_together
                 for index in old_unique_together.difference(new_unique_together):
                     cls._add_operator(
-                        cls._drop_index(model, index, True), upgrade,
+                        cls._drop_index(table_name, index, True), upgrade,
                     )
 
                 old_data_fields = old_model_describe.get("data_fields")
@@ -297,15 +300,15 @@ class Migrate:
                                         and cls._db_version.startswith("5.")
                                     ):
                                         cls._add_operator(
-                                            cls._modify_field(model, new_data_field), upgrade,
+                                            cls._modify_field(table_name, new_data_field), upgrade,
                                         )
                                     else:
                                         cls._add_operator(
-                                            cls._rename_field(model, *changes[1][2]), upgrade,
+                                            cls._rename_field(table_name, *changes[1][2]), upgrade,
                                         )
                     if not is_rename:
                         cls._add_operator(
-                            cls._add_field(model, new_data_field,), upgrade,
+                            cls._add_field(table_name, new_data_field,), upgrade,
                         )
                 # remove fields
                 for old_data_field_name in set(old_data_fields_name).difference(
@@ -318,7 +321,7 @@ class Migrate:
                         continue
                     cls._add_operator(
                         cls._remove_field(
-                            model,
+                            table_name,
                             next(
                                 filter(
                                     lambda x: x.get("name") == old_data_field_name, old_data_fields
@@ -341,7 +344,9 @@ class Migrate:
                         filter(lambda x: x.get("name") == new_fk_field_name, new_fk_fields)
                     )
                     cls._add_operator(
-                        cls._add_fk(model, fk_field, new_models.get(fk_field.get("python_type"))),
+                        cls._add_fk(
+                            table_name, fk_field, new_models.get(fk_field.get("python_type"))
+                        ),
                         upgrade,
                         fk_m2m=True,
                     )
@@ -354,7 +359,9 @@ class Migrate:
                     )
                     cls._add_operator(
                         cls._drop_fk(
-                            model, old_fk_field, old_models.get(old_fk_field.get("python_type"))
+                            table_name,
+                            old_fk_field,
+                            old_models.get(old_fk_field.get("python_type")),
                         ),
                         upgrade,
                         fk_m2m=True,
@@ -375,11 +382,11 @@ class Migrate:
                             unique = new_data_field.get("unique")
                             if old_new[0] is False and old_new[1] is True:
                                 cls._add_operator(
-                                    cls._add_index(model, (field_name,), unique), upgrade,
+                                    cls._add_index(table_name, (field_name,), unique), upgrade,
                                 )
                             else:
                                 cls._add_operator(
-                                    cls._drop_index(model, (field_name,), unique), upgrade,
+                                    cls._drop_index(table_name, (field_name,), unique), upgrade,
                                 )
                         elif option == "db_field_types.":
                             # continue since repeated with others
@@ -390,18 +397,18 @@ class Migrate:
                             ):
                                 # change column default
                                 cls._add_operator(
-                                    cls._alter_default(model, new_data_field), upgrade
+                                    cls._alter_default(table_name, new_data_field), upgrade
                                 )
                         elif option == "unique":
                             # because indexed include it
                             pass
                         elif option == "nullable":
                             # change nullable
-                            cls._add_operator(cls._alter_null(model, new_data_field), upgrade)
+                            cls._add_operator(cls._alter_null(table_name, new_data_field), upgrade)
                         else:
                             # modify column
                             cls._add_operator(
-                                cls._modify_field(model, new_data_field), upgrade,
+                                cls._modify_field(table_name, new_data_field), upgrade,
                             )
 
         for old_model in old_models:
@@ -409,97 +416,91 @@ class Migrate:
                 cls._add_operator(cls.drop_model(old_models.get(old_model).get("table")), upgrade)
 
     @classmethod
-    def rename_table(cls, model: Type[Model], old_table_name: str, new_table_name: str):
-        return cls.ddl.rename_table(model, old_table_name, new_table_name)
+    def rename_table(cls, table_name: str, old_table_name: str, new_table_name: str):
+        return cls.ddl.rename_table(table_name, old_table_name, new_table_name)
 
     @classmethod
-    def add_model(cls, model: Type[Model]):
-        return cls.ddl.create_table(model)
+    def add_model(cls, table_describe):
+        return cls.ddl.create_table(table_describe)
 
     @classmethod
     def drop_model(cls, table_name: str):
         return cls.ddl.drop_table(table_name)
 
     @classmethod
-    def create_m2m(cls, model: Type[Model], field_describe: dict, reference_table_describe: dict):
-        return cls.ddl.create_m2m(model, field_describe, reference_table_describe)
+    def create_m2m(cls, table_describe: dict, field_describe: dict, reference_table_describe: dict):
+        return cls.ddl.create_m2m(table_describe, field_describe, reference_table_describe)
 
     @classmethod
     def drop_m2m(cls, table_name: str):
         return cls.ddl.drop_m2m(table_name)
 
     @classmethod
-    def _resolve_fk_fields_name(cls, model: Type[Model], fields_name: Tuple[str]):
+    def _resolve_fk_fields_name(cls, fk_fields: List[dict], fields_name: Tuple[str]):
         ret = []
         for field_name in fields_name:
-            if field_name in model._meta.fk_fields:
+            if field_name in fk_fields:
                 ret.append(field_name + "_id")
             else:
                 ret.append(field_name)
         return ret
 
-    @classmethod
-    def _drop_index(cls, model: Type[Model], fields_name: Tuple[str], unique=False):
-        fields_name = cls._resolve_fk_fields_name(model, fields_name)
-        return cls.ddl.drop_index(model, fields_name, unique)
+    @staticmethod
+    def _drop_index(cls, table_name: str, fields_name: Tuple[str,], unique=False):
+        return cls.ddl.drop_index(table_name, fields_name, unique)
 
     @classmethod
-    def _add_index(cls, model: Type[Model], fields_name: Tuple[str], unique=False):
-        fields_name = cls._resolve_fk_fields_name(model, fields_name)
-        return cls.ddl.add_index(model, fields_name, unique)
+    def _add_index(cls, table_name: str, fields_name: Tuple[str, ...], unique=False):
+        return cls.ddl.add_index(table_name, fields_name, unique)
 
     @classmethod
-    def _add_field(cls, model: Type[Model], field_describe: dict, is_pk: bool = False):
-        return cls.ddl.add_column(model, field_describe, is_pk)
+    def _add_field(cls, table_name: str, field_describe: dict, is_pk: bool = False):
+        return cls.ddl.add_column(table_name, field_describe, is_pk)
 
     @classmethod
-    def _alter_default(cls, model: Type[Model], field_describe: dict):
-        return cls.ddl.alter_column_default(model, field_describe)
+    def _alter_default(cls, table_name: str, field_describe: dict):
+        return cls.ddl.alter_column_default(table_name, field_describe)
 
     @classmethod
-    def _alter_null(cls, model: Type[Model], field_describe: dict):
-        return cls.ddl.alter_column_null(model, field_describe)
+    def _alter_null(cls, table_name: str, field_describe: dict):
+        return cls.ddl.alter_column_null(table_name, field_describe)
 
     @classmethod
-    def _set_comment(cls, model: Type[Model], field_describe: dict):
-        return cls.ddl.set_comment(model, field_describe)
+    def _set_comment(cls, table_name: str, field_describe: dict):
+        return cls.ddl.set_comment(table_name, field_describe)
 
     @classmethod
-    def _modify_field(cls, model: Type[Model], field_describe: dict):
-        return cls.ddl.modify_column(model, field_describe)
+    def _modify_field(cls, table_name: str, field_describe: dict):
+        return cls.ddl.modify_column(table_name, field_describe)
 
     @classmethod
-    def _drop_fk(cls, model: Type[Model], field_describe: dict, reference_table_describe: dict):
-        return cls.ddl.drop_fk(model, field_describe, reference_table_describe)
+    def _drop_fk(cls, table_name: str, field_describe: dict, reference_table_describe: dict):
+        return cls.ddl.drop_fk(table_name, field_describe, reference_table_describe)
 
     @classmethod
-    def _remove_field(cls, model: Type[Model], column_name: str):
-        return cls.ddl.drop_column(model, column_name)
+    def _remove_field(cls, table_name: str, column_name: str):
+        return cls.ddl.drop_column(table_name, column_name)
 
     @classmethod
-    def _rename_field(cls, model: Type[Model], old_field_name: str, new_field_name: str):
-        return cls.ddl.rename_column(model, old_field_name, new_field_name)
+    def _rename_field(cls, table_name: str, old_field_name: str, new_field_name: str):
+        return cls.ddl.rename_column(table_name, old_field_name, new_field_name)
 
     @classmethod
-    def _change_field(cls, model: Type[Model], old_field_describe: dict, new_field_describe: dict):
+    def _change_field(cls, table_name: str, old_field_describe: dict, new_field_describe: dict):
         db_field_types = new_field_describe.get("db_field_types")
         return cls.ddl.change_column(
-            model,
+            table_name,
             old_field_describe.get("db_column"),
             new_field_describe.get("db_column"),
             db_field_types.get(cls.dialect) or db_field_types.get(""),
         )
 
     @classmethod
-    def _add_fk(cls, model: Type[Model], field_describe: dict, reference_table_describe: dict):
+    def _add_fk(cls, table_name: str, field_describe: dict, reference_table_describe: dict):
         """
         add fk
-        :param model:
-        :param field_describe:
-        :param reference_table_describe:
-        :return:
         """
-        return cls.ddl.add_fk(model, field_describe, reference_table_describe)
+        return cls.ddl.add_fk(table_name, field_describe, reference_table_describe)
 
     @classmethod
     def _merge_operators(cls):

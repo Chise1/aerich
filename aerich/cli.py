@@ -13,8 +13,11 @@ from tortoise.exceptions import OperationalError
 from tortoise.transactions import in_transaction
 from tortoise.utils import get_schema_sql
 
+from aerich import __version__
+from aerich.enums import Color
 from aerich.inspectdb import InspectDb
 from aerich.migrate import Migrate
+from aerich.models import Aerich
 from aerich.utils import (
     get_app_connection,
     get_app_connection_name,
@@ -23,10 +26,6 @@ from aerich.utils import (
     get_version_content_from_file,
     write_version_file,
 )
-
-from aerich import __version__
-from aerich.enums import Color
-from aerich.models import Aerich
 
 parser = ConfigParser()
 
