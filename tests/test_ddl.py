@@ -9,7 +9,7 @@ from tests.models import Category, Product, User
 
 
 def test_create_table():
-    ret = Migrate.ddl.create_table(Category)
+    ret = Migrate.ddl.create_table(Category.describe())
     if isinstance(Migrate.ddl, MysqlDDL):
         assert (
             ret
@@ -58,7 +58,10 @@ def test_drop_table():
 
 
 def test_add_column():
-    ret = Migrate.ddl.add_column(Category, Category._meta.fields_map.get("name").describe(False))
+    ret = Migrate.ddl.add_column(
+        Category._meta.db_table, Category._meta.fields_map.get("name").describe(False)
+    )
+    print(ret)
     if isinstance(Migrate.ddl, MysqlDDL):
         assert ret == "ALTER TABLE `category` ADD `name` VARCHAR(200)"
     else:
@@ -156,8 +159,8 @@ def test_drop_column():
 
 
 def test_add_index():
-    index = Migrate.ddl.add_index(Category, ["name"])
-    index_u = Migrate.ddl.add_index(Category, ["name"], True)
+    index = Migrate.ddl.add_index(Category._meta.db_table, ["name"])
+    index_u = Migrate.ddl.add_index(Category._meta.db_table, ["name"], True)
     if isinstance(Migrate.ddl, MysqlDDL):
         assert index == "ALTER TABLE `category` ADD INDEX `idx_category_name_8b0cb9` (`name`)"
         assert (
@@ -174,8 +177,8 @@ def test_add_index():
 
 
 def test_drop_index():
-    ret = Migrate.ddl.drop_index(Category, ["name"])
-    ret_u = Migrate.ddl.drop_index(Category, ["name"], True)
+    ret = Migrate.ddl.drop_index(Category._meta.db_table, ["name"])
+    ret_u = Migrate.ddl.drop_index(Category._meta.db_table, ["name"], True)
     if isinstance(Migrate.ddl, MysqlDDL):
         assert ret == "ALTER TABLE `category` DROP INDEX `idx_category_name_8b0cb9`"
         assert ret_u == "ALTER TABLE `category` DROP INDEX `uid_category_name_8b0cb9`"
@@ -189,7 +192,9 @@ def test_drop_index():
 
 def test_add_fk():
     ret = Migrate.ddl.add_fk(
-        Category, Category._meta.fields_map.get("user").describe(False), User.describe(False)
+        Category._meta.db_table,
+        Category._meta.fields_map.get("user").describe(False),
+        User.describe(False),
     )
     if isinstance(Migrate.ddl, MysqlDDL):
         assert (
@@ -205,7 +210,9 @@ def test_add_fk():
 
 def test_drop_fk():
     ret = Migrate.ddl.drop_fk(
-        Category, Category._meta.fields_map.get("user").describe(False), User.describe(False)
+        Category._meta.db_table,
+        Category._meta.fields_map.get("user").describe(False),
+        User.describe(False),
     )
     if isinstance(Migrate.ddl, MysqlDDL):
         assert ret == "ALTER TABLE `category` DROP FOREIGN KEY `fk_category_user_e2e3874c`"
