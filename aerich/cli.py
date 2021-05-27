@@ -98,9 +98,11 @@ async def migrate(ctx: Context, name):
 
 
 @cli.command(help="Upgrade to specified version.")
-@click.pass_context
+@click.option(
+    "-t", "--transactions", is_flag=True, default=False, show_default=True, help="Transtrations",
+)
 @coro
-async def upgrade(ctx: Context):
+async def upgrade(ctx: Context, transactions: bool):
     config = ctx.obj["config"]
     app = ctx.obj["app"]
     migrated = False
@@ -114,8 +116,18 @@ async def upgrade(ctx: Context):
                 file_path = Path(Migrate.migrate_location, version_file)
                 content = get_version_content_from_file(file_path)
                 upgrade_query_list = content.get("upgrade")
-                for upgrade_query in upgrade_query_list:
-                    await conn.execute_script(upgrade_query)
+                downgrade_query_list = content.get("downgrade")
+                flag = 0
+                try:
+                    for upgrade_query in upgrade_query_list:
+                        await conn.execute_script(upgrade_query)
+                        flag += 1
+                except Exception as e:
+                    if transactions:
+                        while flag > 0:
+                            await conn.execute_script(downgrade_query_list[flag])
+                            flag -= 1
+                    raise e
                 await Aerich.create(
                     version=version_file, app=app, content=get_models_describe(app),
                 )

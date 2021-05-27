@@ -412,7 +412,7 @@ class Migrate:
     #             cls._add_operator(cls.drop_model(old_models.get(old_model).get("table")), upgrade)
 
     @classmethod
-    def diff_models(
+    def diff_models(  # fixme:indexes联合索引好像没有变更和增加的操作。
         cls, old_models_describes: Dict[str, dict], new_models_describes: Dict[str, dict],
     ):
         """
@@ -765,7 +765,7 @@ class Migrate:
         return ret
 
     @classmethod
-    def _drop_index(cls, table_name: str, fields_name: Tuple[str,], unique=False):
+    def _drop_index(cls, table_name: str, fields_name: Tuple[str, ...], unique=False):
         return cls.ddl.drop_index(table_name, fields_name, unique)
 
     @classmethod

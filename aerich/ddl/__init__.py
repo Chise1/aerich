@@ -142,7 +142,7 @@ class BaseDDL:
             column_names=", ".join([self.schema_generator.quote(f) for f in field_names]),
         )
 
-    def drop_index(self, table_name: str, field_names: Tuple[str,], unique=False):
+    def drop_index(self, table_name: str, field_names: Tuple[str, ...], unique=False):
         return self._DROP_INDEX_TEMPLATE.format(
             index_name=self.schema_generator._generate_index_name(
                 "idx" if not unique else "uid", table_name, field_names

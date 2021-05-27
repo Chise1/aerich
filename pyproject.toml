@@ -16,13 +16,13 @@ include = ["CHANGELOG.md", "LICENSE", "README.md"]
 
 [tool.poetry.dependencies]
 python = "^3.7"
-tortoise-orm = { path ="/home/chise/project/tortoise-orm"}
 click = "*"
 pydantic = "*"
 aiomysql = { version = "*", optional = true }
 asyncpg = { version = "*", optional = true }
 ddlparse = "*"
 dictdiffer = "*"
+tortoise-orm = {git = "https://github.com/Chise1/tortoise-orm.git", rev = "dev-rb"}
 
 [tool.poetry.dev-dependencies]
 flake8 = "*"
