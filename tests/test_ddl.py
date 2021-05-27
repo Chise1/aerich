@@ -61,7 +61,6 @@ def test_add_column():
     ret = Migrate.ddl.add_column(
         Category._meta.db_table, Category._meta.fields_map.get("name").describe(False)
     )
-    print(ret)
     if isinstance(Migrate.ddl, MysqlDDL):
         assert ret == "ALTER TABLE `category` ADD `name` VARCHAR(200)"
     else:

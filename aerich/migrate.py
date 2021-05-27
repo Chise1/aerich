@@ -128,8 +128,6 @@ class Migrate:
         """
         new_version_content = get_models_describe(cls.app)
         cls.diff_models(cls._last_version_content, new_version_content)
-        cls.diff_models(new_version_content, cls._last_version_content, False)
-
         cls._merge_operators()
 
         if not cls.upgrade_operators:
@@ -182,10 +180,10 @@ class Migrate:
             else:
                 old_model_describe = old_models.get(new_model_str)
                 # rename table
-                new_table = new_model_describe.get("table")
-                old_table = old_model_describe.get("table")
+                new_table: str = new_model_describe.get("table")
+                old_table: str = old_model_describe.get("table")
                 if new_table != old_table:
-                    cls._add_operator(cls.rename_table(table_name, old_table, new_table), upgrade)
+                    cls._add_operator(cls.rename_table(old_table, new_table), upgrade)
                 old_unique_together = set(
                     map(lambda x: tuple(x), old_model_describe.get("unique_together"))
                 )
@@ -204,9 +202,6 @@ class Migrate:
                 # m2m fields
                 old_m2m_fields = old_model_describe.get("m2m_fields")
                 new_m2m_fields = new_model_describe.get("m2m_fields")
-                print("")
-                print(old_m2m_fields)
-                print(new_m2m_fields)
                 for action, option, change in diff(old_m2m_fields, new_m2m_fields):
                     table = change[0][1].get("through")
                     if action == "add":
@@ -245,7 +240,8 @@ class Migrate:
                 # remove unique_together
                 for index in old_unique_together.difference(new_unique_together):
                     cls._add_operator(
-                        cls._drop_index(table_name, index, True), upgrade,
+                        cls._drop_index(table_name=table_name, fields_name=index, unique=True),
+                        upgrade,
                     )
 
                 old_data_fields = old_model_describe.get("data_fields")
@@ -416,8 +412,320 @@ class Migrate:
                 cls._add_operator(cls.drop_model(old_models.get(old_model).get("table")), upgrade)
 
     @classmethod
-    def rename_table(cls, table_name: str, old_table_name: str, new_table_name: str):
-        return cls.ddl.rename_table(table_name, old_table_name, new_table_name)
+    def diff_models2(
+        cls, old_models_describes: Dict[str, dict], new_models_describes: Dict[str, dict],
+    ):
+        """
+        diff models and add operators
+        """
+        _aerich = f"{cls.app}.{cls._aerich}"
+        old_models_describes.pop(_aerich, None)
+        new_models_describes.pop(_aerich, None)
+        for new_model_str, new_model_describe in new_models_describes.items():
+            table_name = new_model_describe["table"]
+            if new_model_str not in old_models_describes:
+                cls._add_operator(cls.add_model(new_model_describe), True)
+                cls._add_operator(cls.drop_model(table_name), False)
+            else:
+                old_model_describe = old_models_describes.get(new_model_str)
+                # rename table
+                new_table = new_model_describe.get("table")
+                old_table = old_model_describe.get("table")
+                if new_table != old_table:
+                    cls._add_operator(cls.rename_table(old_table, new_table), True)
+                    cls._add_operator(cls.rename_table(new_table, old_table), False)
+                old_unique_together = set(
+                    map(lambda x: tuple(x), old_model_describe.get("unique_together"))
+                )
+                new_unique_together = set(
+                    map(lambda x: tuple(x), new_model_describe.get("unique_together"))
+                )
+
+                old_pk_field = old_model_describe.get("pk_field")
+                new_pk_field = new_model_describe.get("pk_field")
+                # pk field
+                changes = diff(old_pk_field, new_pk_field)
+                for action, option, change in changes:
+                    # current only support rename pk
+                    if action == "change" and option == "name":
+                        cls._add_operator(cls._rename_field(table_name, *change), True)
+                        change.reverse()
+                        cls._add_operator(cls._rename_field(table_name, *change), False)
+
+                # m2m fields
+                # fixme：需要详细测试
+                old_m2m_fields = old_model_describe.get("m2m_fields")
+                new_m2m_fields = new_model_describe.get("m2m_fields")
+                for action, option, change in diff(old_m2m_fields, new_m2m_fields):
+                    table = change[0][1].get("through")
+                    if table not in cls._upgrade_m2m:
+                        cls._upgrade_m2m.append(table)
+                    if action == "add":
+                        cls._add_operator(
+                            cls.create_m2m(
+                                new_model_describe,
+                                change[0][1],
+                                new_models_describes.get(change[0][1].get("model_name")),
+                            ),
+                            True,
+                            fk_m2m=True,
+                        )
+                        cls._add_operator(
+                            cls.drop_m2m(table), False, fk_m2m=True,
+                        )
+                    elif action == "remove":
+                        cls._add_operator(cls.drop_m2m(table), True, fk_m2m=True)
+                        cls._add_operator(
+                            cls.create_m2m(
+                                old_model_describe,
+                                change[0][1],
+                                old_models_describes.get(change[0][1].get("model_name")),
+                            ),
+                            False,
+                            fk_m2m=True,
+                        )
+                # add unique_together
+                for index in new_unique_together.difference(old_unique_together):
+                    cls._add_operator(
+                        cls._add_index(table_name, index, True), True,
+                    )
+                    cls._add_operator(
+                        cls._drop_index(table_name, index, True), False,
+                    )
+                # remove unique_together
+                for index in old_unique_together.difference(new_unique_together):
+                    cls._add_operator(
+                        cls._drop_index(table_name, index, True), True,
+                    )
+                    cls._add_operator(
+                        cls._add_index(table_name, index, True), False,
+                    )
+
+                old_data_fields = old_model_describe.get("data_fields")
+                new_data_fields = new_model_describe.get("data_fields")
+
+                old_data_fields_name = list(map(lambda x: x.get("name"), old_data_fields))
+                new_data_fields_name = list(map(lambda x: x.get("name"), new_data_fields))
+
+                # add fields or rename fields
+                for new_data_field_name in set(new_data_fields_name).difference(
+                    set(old_data_fields_name)
+                ):
+                    new_data_field = next(
+                        filter(lambda x: x.get("name") == new_data_field_name, new_data_fields)
+                    )
+                    is_rename = False
+                    for old_data_field in old_data_fields:
+                        changes = list(diff(old_data_field, new_data_field))
+                        old_data_field_name = old_data_field.get("name")
+                        if len(changes) == 2:
+                            # rename field
+                            if (
+                                changes[0]
+                                == ("change", "name", (old_data_field_name, new_data_field_name),)
+                                and changes[1]
+                                == (
+                                    "change",
+                                    "db_column",
+                                    (
+                                        old_data_field.get("db_column"),
+                                        new_data_field.get("db_column"),
+                                    ),
+                                )
+                                and old_data_field_name not in new_data_fields_name
+                            ):
+                                is_rename = click.prompt(
+                                    f"Rename {old_data_field_name} to {new_data_field_name}?",
+                                    default=True,
+                                    type=bool,
+                                    show_choices=True,
+                                )
+                                if is_rename:
+                                    cls._rename_new.append(new_data_field_name)
+                                    cls._rename_old.append(old_data_field_name)
+                                    # only MySQL8+ has rename syntax
+                                    if (
+                                        cls.dialect == "mysql"
+                                        and cls._db_version
+                                        and cls._db_version.startswith("5.")
+                                    ):
+                                        cls._add_operator(
+                                            cls._modify_field(table_name, new_data_field), True,
+                                        )
+                                        cls._add_operator(
+                                            cls._modify_field(table_name, old_data_field), False,
+                                        )
+                                    else:
+                                        names = changes[1][2]
+                                        cls._add_operator(
+                                            cls._rename_field(table_name, *names), True,
+                                        )
+                                        names.reverse()
+                                        cls._add_operator(
+                                            cls._rename_field(table_name, *names), False,
+                                        )
+                    if not is_rename:
+                        cls._add_operator(
+                            cls._add_field(table_name, new_data_field,), True,
+                        )
+
+                        cls._add_operator(
+                            cls._remove_field(table_name, new_data_field["db_column"],), False,
+                        )
+                # remove fields
+                for old_data_field_name in set(old_data_fields_name).difference(
+                    set(new_data_fields_name)
+                ):
+                    # don't remove field if is rename
+                    if old_data_field_name in cls._rename_old:
+                        continue
+                    cls._add_operator(
+                        cls._remove_field(
+                            table_name,
+                            next(
+                                filter(
+                                    lambda x: x.get("name") == old_data_field_name, old_data_fields
+                                )
+                            ).get("db_column"),
+                        ),
+                        True,
+                    )
+                    cls._add_operator(
+                        cls._add_field(
+                            table_name,
+                            next(
+                                filter(
+                                    lambda x: x.get("name") == old_data_field_name, old_data_fields
+                                )
+                            ),
+                        ),
+                        False,
+                    )
+                old_fk_fields = old_model_describe.get("fk_fields")
+                new_fk_fields = new_model_describe.get("fk_fields")
+
+                old_fk_fields_name = list(map(lambda x: x.get("name"), old_fk_fields))
+                new_fk_fields_name = list(map(lambda x: x.get("name"), new_fk_fields))
+
+                # add fk
+                for new_fk_field_name in set(new_fk_fields_name).difference(
+                    set(old_fk_fields_name)
+                ):
+                    fk_field = next(
+                        filter(lambda x: x.get("name") == new_fk_field_name, new_fk_fields)
+                    )
+                    cls._add_operator(
+                        cls._add_fk(
+                            table_name,
+                            fk_field,
+                            new_models_describes.get(fk_field.get("python_type")),
+                        ),
+                        True,
+                        fk_m2m=True,
+                    )
+                    cls._add_operator(
+                        cls._drop_fk(
+                            table_name,
+                            fk_field,
+                            new_models_describes.get(fk_field.get("python_type")),
+                        ),
+                        False,
+                        fk_m2m=True,
+                    )
+                # drop fk
+                for old_fk_field_name in set(old_fk_fields_name).difference(
+                    set(new_fk_fields_name)
+                ):
+                    old_fk_field = next(
+                        filter(lambda x: x.get("name") == old_fk_field_name, old_fk_fields)
+                    )
+                    cls._add_operator(
+                        cls._drop_fk(
+                            table_name,
+                            old_fk_field,
+                            old_models_describes.get(old_fk_field.get("python_type")),
+                        ),
+                        True,
+                        fk_m2m=True,
+                    )
+                    cls._add_operator(
+                        cls._add_fk(
+                            table_name,
+                            old_fk_field,
+                            old_models_describes.get(old_fk_field.get("python_type")),
+                        ),
+                        False,
+                        fk_m2m=True,
+                    )
+                # change fields
+                for field_name in set(new_data_fields_name).intersection(set(old_data_fields_name)):
+                    old_data_field = next(
+                        filter(lambda x: x.get("name") == field_name, old_data_fields)
+                    )
+                    new_data_field = next(
+                        filter(lambda x: x.get("name") == field_name, new_data_fields)
+                    )
+                    changes = diff(old_data_field, new_data_field)
+                    for change in changes:
+                        _, option, old_new = change
+                        if option == "indexed":
+                            # change index
+                            unique = new_data_field.get("unique")
+                            if old_new[0] is False and old_new[1] is True:
+                                cls._add_operator(
+                                    cls._add_index(table_name, (field_name,), unique), True,
+                                )
+                                cls._add_operator(
+                                    cls._drop_index(table_name, (field_name,), unique), False,
+                                )
+                            else:
+                                cls._add_operator(
+                                    cls._drop_index(table_name, (field_name,), unique), True,
+                                )
+                                cls._add_operator(
+                                    cls._add_index(table_name, (field_name,), unique), False,
+                                )
+                        elif option == "db_field_types.":
+                            # continue since repeated with others
+                            continue
+                        elif option == "default":
+                            if not (
+                                is_default_function(old_new[0]) or is_default_function(old_new[1])
+                            ):
+                                # change column default
+                                cls._add_operator(
+                                    cls._alter_default(table_name, new_data_field), True
+                                )
+                                cls._add_operator(
+                                    cls._alter_default(table_name, old_data_field), False
+                                )
+                        elif option == "unique":
+                            # because indexed include it
+                            pass
+                        elif option == "nullable":
+                            # change nullable
+                            cls._add_operator(cls._alter_null(table_name, new_data_field), True)
+                            cls._add_operator(cls._alter_null(table_name, old_data_field), False)
+
+                        else:
+                            # modify column
+                            cls._add_operator(
+                                cls._modify_field(table_name, new_data_field), True,
+                            )
+                            cls._add_operator(
+                                cls._modify_field(table_name, old_data_field), False,
+                            )
+
+        for old_model in old_models_describes:
+            if old_model not in new_models_describes.keys():
+                cls._add_operator(
+                    cls.drop_model(old_models_describes.get(old_model).get("table")), True
+                )
+                cls._add_operator(cls.add_model(old_models_describes.get(old_model)), False)
+
+    @classmethod
+    def rename_table(cls, old_table_name: str, new_table_name: str):
+        return cls.ddl.rename_table(old_table_name, new_table_name)
 
     @classmethod
     def add_model(cls, table_describe):
@@ -445,7 +753,7 @@ class Migrate:
                 ret.append(field_name)
         return ret
 
-    @staticmethod
+    @classmethod
     def _drop_index(cls, table_name: str, fields_name: Tuple[str,], unique=False):
         return cls.ddl.drop_index(table_name, fields_name, unique)
 

@@ -1,4 +1,4 @@
-from typing import Iterable, List, Type
+from typing import Iterable, Tuple, Type
 
 from tortoise import BaseDBAsyncClient
 from tortoise.backends.base.schema_generator import BaseSchemaGenerator
@@ -142,7 +142,7 @@ class BaseDDL:
             column_names=", ".join([self.schema_generator.quote(f) for f in field_names]),
         )
 
-    def drop_index(self, table_name: str, field_names: List[str], unique=False):
+    def drop_index(self, table_name: str, field_names: Tuple[str,], unique=False):
         return self._DROP_INDEX_TEMPLATE.format(
             index_name=self.schema_generator._generate_index_name(
                 "idx" if not unique else "uid", table_name, field_names
@@ -193,7 +193,7 @@ class BaseDDL:
     def set_comment(self, table_name: str, field_describe: dict):
         return self.modify_column(table_name, field_describe)
 
-    def rename_table(self, table_name: str, old_table_name: str, new_table_name: str):
+    def rename_table(self, old_table_name: str, new_table_name: str):
         return self._RENAME_TABLE_TEMPLATE.format(
-            table_name=table_name, old_table_name=old_table_name, new_table_name=new_table_name
+            old_table_name=old_table_name, new_table_name=new_table_name
         )

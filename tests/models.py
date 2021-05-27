@@ -75,3 +75,4 @@ class Config(Model):
 
 class NewModel(Model):
     name = fields.CharField(max_length=50)
+    info = fields.CharField(max_length=32)
