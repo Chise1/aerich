@@ -113,8 +113,8 @@ class Migrate:
             if version_file.startswith(version.split("_")[0]):
                 os.unlink(Path(cls.migrate_location, version_file))
         content = {
-            "upgrade": cls.upgrade_operators,
-            "downgrade": cls.downgrade_operators,
+            "upgrade": list(dict.fromkeys(cls.upgrade_operators)),
+            "downgrade": list(dict.fromkeys(cls.downgrade_operators)),
         }
         write_version_file(Path(cls.migrate_location, version), content)
         return version
@@ -205,6 +205,8 @@ class Migrate:
                 old_m2m_fields = old_model_describe.get("m2m_fields")
                 new_m2m_fields = new_model_describe.get("m2m_fields")
                 for action, option, change in diff(old_m2m_fields, new_m2m_fields):
+                    if change[0][0] == "db_constraint":
+                        continue
                     table = change[0][1].get("through")
                     if action == "add":
                         add = False
@@ -236,14 +238,10 @@ class Migrate:
                             cls._add_operator(cls.drop_m2m(table), upgrade, fk_m2m=True)
                 # add unique_together
                 for index in new_unique_together.difference(old_unique_together):
-                    cls._add_operator(
-                        cls._add_index(model, index, True), upgrade,
-                    )
+                    cls._add_operator(cls._add_index(model, index, True), upgrade, True)
                 # remove unique_together
                 for index in old_unique_together.difference(new_unique_together):
-                    cls._add_operator(
-                        cls._drop_index(model, index, True), upgrade,
-                    )
+                    cls._add_operator(cls._drop_index(model, index, True), upgrade, True)
 
                 old_data_fields = old_model_describe.get("data_fields")
                 new_data_fields = new_model_describe.get("data_fields")
@@ -297,7 +295,10 @@ class Migrate:
                                         and cls._db_version.startswith("5.")
                                     ):
                                         cls._add_operator(
-                                            cls._modify_field(model, new_data_field), upgrade,
+                                            cls._change_field(
+                                                model, old_data_field, new_data_field
+                                            ),
+                                            upgrade,
                                         )
                                     else:
                                         cls._add_operator(
@@ -340,11 +341,14 @@ class Migrate:
                     fk_field = next(
                         filter(lambda x: x.get("name") == new_fk_field_name, new_fk_fields)
                     )
-                    cls._add_operator(
-                        cls._add_fk(model, fk_field, new_models.get(fk_field.get("python_type"))),
-                        upgrade,
-                        fk_m2m=True,
-                    )
+                    if fk_field.get("db_constraint"):
+                        cls._add_operator(
+                            cls._add_fk(
+                                model, fk_field, new_models.get(fk_field.get("python_type"))
+                            ),
+                            upgrade,
+                            fk_m2m=True,
+                        )
                 # drop fk
                 for old_fk_field_name in set(old_fk_fields_name).difference(
                     set(new_fk_fields_name)
@@ -352,13 +356,14 @@ class Migrate:
                     old_fk_field = next(
                         filter(lambda x: x.get("name") == old_fk_field_name, old_fk_fields)
                     )
-                    cls._add_operator(
-                        cls._drop_fk(
-                            model, old_fk_field, old_models.get(old_fk_field.get("python_type"))
-                        ),
-                        upgrade,
-                        fk_m2m=True,
-                    )
+                    if old_fk_field.get("db_constraint"):
+                        cls._add_operator(
+                            cls._drop_fk(
+                                model, old_fk_field, old_models.get(old_fk_field.get("python_type"))
+                            ),
+                            upgrade,
+                            fk_m2m=True,
+                        )
                 # change fields
                 for field_name in set(new_data_fields_name).intersection(set(old_data_fields_name)):
                     old_data_field = next(
@@ -375,11 +380,11 @@ class Migrate:
                             unique = new_data_field.get("unique")
                             if old_new[0] is False and old_new[1] is True:
                                 cls._add_operator(
-                                    cls._add_index(model, (field_name,), unique), upgrade,
+                                    cls._add_index(model, (field_name,), unique), upgrade, True
                                 )
                             else:
                                 cls._add_operator(
-                                    cls._drop_index(model, (field_name,), unique), upgrade,
+                                    cls._drop_index(model, (field_name,), unique), upgrade, True
                                 )
                         elif option == "db_field_types.":
                             # continue since repeated with others
@@ -394,7 +399,7 @@ class Migrate:
                                 )
                         elif option == "unique":
                             # because indexed include it
-                            pass
+                            continue
                         elif option == "nullable":
                             # change nullable
                             cls._add_operator(cls._alter_null(model, new_data_field), upgrade)

@@ -1,9 +1,28 @@
 import importlib
+import os
 import re
+import sys
+from pathlib import Path
 from typing import Dict
 
-from click import BadOptionUsage, Context
+from click import BadOptionUsage, ClickException, Context
 from tortoise import BaseDBAsyncClient, Tortoise
+
+
+def add_src_path(path: str) -> str:
+    """
+    add a folder to the paths so we can import from there
+    :param path: path to add
+    :return: absolute path
+    """
+    if not os.path.isabs(path):
+        # use the absolute path, otherwise some other things (e.g. __file__) won't work properly
+        path = os.path.abspath(path)
+    if not os.path.isdir(path):
+        raise ClickException(f"Specified source folder does not exist: {path}")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    return path
 
 
 def get_app_connection_name(config, app_name: str) -> str:
@@ -41,12 +60,11 @@ def get_tortoise_config(ctx: Context, tortoise_orm: str) -> dict:
     splits = tortoise_orm.split(".")
     config_path = ".".join(splits[:-1])
     tortoise_config = splits[-1]
+
     try:
         config_module = importlib.import_module(config_path)
-    except (ModuleNotFoundError, AttributeError):
-        raise BadOptionUsage(
-            ctx=ctx, message=f'No config named "{config_path}"', option_name="--config"
-        )
+    except ModuleNotFoundError as e:
+        raise ClickException(f"Error while importing configuration module: {e}") from None
 
     config = getattr(config_module, tortoise_config, None)
     if not config:
@@ -84,7 +102,7 @@ def get_version_content_from_file(version_file: str) -> Dict:
         return ret
 
 
-def write_version_file(version_file: str, content: Dict):
+def write_version_file(version_file: Path, content: Dict):
     """
     write version file
     :param version_file:

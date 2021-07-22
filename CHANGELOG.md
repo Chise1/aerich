@@ -2,6 +2,18 @@
 
 ## 0.5
 
+### 0.5.5
+
+- Fix KeyError: 'src_folder' after upgrading aerich to 0.5.4. (#176)
+- Fix MySQL 5.X rename column.
+- Fix `db_constraint` when fk changed. (#179)
+
+### 0.5.4
+
+- Fix incorrect index creation order. (#151)
+- Not catch exception when import config. (#164)
+- Support `drop column` for sqlite. (#40)
+
 ### 0.5.3
 
 - Fix postgre alter null. (#142)

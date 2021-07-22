@@ -1,6 +1,5 @@
 import asyncio
 import os
-import sys
 from configparser import ConfigParser
 from functools import wraps
 from pathlib import Path
@@ -16,6 +15,7 @@ from tortoise.utils import get_schema_sql
 from aerich.inspectdb import InspectDb
 from aerich.migrate import Migrate
 from aerich.utils import (
+    add_src_path,
     get_app_connection,
     get_app_connection_name,
     get_models_describe,
@@ -29,6 +29,10 @@ from aerich.enums import Color
 from aerich.models import Aerich
 
 parser = ConfigParser()
+
+CONFIG_DEFAULT_VALUES = {
+    "src_folder": ".",
+}
 
 
 def coro(f):
@@ -74,6 +78,10 @@ async def cli(ctx: Context, config, app, name):
 
         location = parser[name]["location"]
         tortoise_orm = parser[name]["tortoise_orm"]
+        src_folder = parser[name].get("src_folder", CONFIG_DEFAULT_VALUES["src_folder"])
+
+        # Add specified source folder to path
+        add_src_path(src_folder)
 
         tortoise_config = get_tortoise_config(ctx, tortoise_orm)
         app = app or list(tortoise_config.get("apps").keys())[0]
@@ -214,19 +222,35 @@ async def history(ctx: Context):
 @click.option(
     "--location", default="./migrations", show_default=True, help="Migrate store location.",
 )
+@click.option(
+    "-s",
+    "--src_folder",
+    default=CONFIG_DEFAULT_VALUES["src_folder"],
+    show_default=False,
+    help="Folder of the source, relative to the project root.",
+)
 @click.pass_context
 @coro
-async def init(
-    ctx: Context, tortoise_orm, location,
-):
+async def init(ctx: Context, tortoise_orm, location, src_folder):
     config_file = ctx.obj["config_file"]
     name = ctx.obj["name"]
     if Path(config_file).exists():
-        return click.secho("You have inited", fg=Color.yellow)
+        return click.secho("Configuration file already created", fg=Color.yellow)
+
+    if os.path.isabs(src_folder):
+        src_folder = os.path.relpath(os.getcwd(), src_folder)
+    # Add ./ so it's clear that this is relative path
+    if not src_folder.startswith("./"):
+        src_folder = "./" + src_folder
+
+    # check that we can find the configuration, if not we can fail before the config file gets created
+    add_src_path(src_folder)
+    get_tortoise_config(ctx, tortoise_orm)
 
     parser.add_section(name)
     parser.set(name, "tortoise_orm", tortoise_orm)
     parser.set(name, "location", location)
+    parser.set(name, "src_folder", src_folder)
 
     with open(config_file, "w", encoding="utf-8") as f:
         parser.write(f)
@@ -294,7 +318,6 @@ async def inspectdb(ctx: Context, table: List[str]):
 
 
 def main():
-    sys.path.insert(0, ".")
     cli()
 
 
